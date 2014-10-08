@@ -4,9 +4,20 @@
 	$i = $_GET['i'];
 	$continue = @$_GET['continue'];
 
+	
+	
+
+
 	if (!get_browser(null, true)) {
 		$warning = 'Unable to get the browser info. Make sure a php_browscap.ini file extists, see ' .
 		'<a href="http://php.net/manual/en/function.get-browser.php">get_browser</a>.';
+	} else {
+		$browser = get_browser(null, true);
+		$browserKey = @$browser['parent'];
+		if (!$browserKey) {
+			$warning = 'Unable to get the browser info. Make sure php_browscap.ini is updated, see ' .
+			'<a target="_blank" href="http://php.net/manual/en/function.get-browser.php">get_browser</a>.';
+		}
 	}
 
 ?><!DOCTYPE HTML>
@@ -46,6 +57,7 @@
 				rightSVG,
 				leftVersion,
 				rightVersion,
+				error,
 				mode = '<?php echo $mode ?>',
 				i = '<?php echo $i ?>'
 				_continue = '<?php echo $continue ?>';
@@ -250,6 +262,14 @@
 
 				var out,
 					identical;
+
+				if (error) {
+					report += "<br/>" + error;
+					$('#report').html(report)
+						.css('background', '#f15c80');
+					onDifferent('Error');
+					return;
+				}
 				
 				// remove identifier for each iframe
 				if (leftSVG && rightSVG) {
@@ -269,13 +289,13 @@
 
 				if (mode === 'images') {
 					if (rightSVG.indexOf('NaN') !== -1) {
-						report += "<br/>The generated SVG contains NaN"
+						report += "<br/>The generated SVG contains NaN";
 						$('#report').html(report)
 							.css('background', '#f15c80');
 						onDifferent('Error');
 
 					} else if (identical) {
-						report += "<br/>The generated SVG is identical"
+						report += "<br/>The generated SVG is identical";
 						$('#report').html(report)
 							.css('background', "#a4edba");
 

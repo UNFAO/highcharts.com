@@ -2,7 +2,7 @@
 // @compilation_level SIMPLE_OPTIMIZATIONS
 
 /**
- * @license Highcharts JS v4.0.3-modified ()
+ * @license Highcharts JS v4.0.4-modified ()
  *
  * (c) 2009-2013 Torstein Hønsi
  *
@@ -74,6 +74,11 @@ function perspective(points, angle2, angle1, origin) {
 	***/
 ////// HELPER METHODS //////
 var dFactor = (4 * (Math.sqrt(2) - 1) / 3) / (PI / 2);
+
+function defined(obj) {
+	return obj !== undefined && obj !== null;
+}
+
 
 function curveTo(cx, cy, rx, ry, start, end, dx, dy) {
 	var result = [];
@@ -150,7 +155,7 @@ Highcharts.SVGRenderer.prototype.cuboid = function (shapeArgs) {
 	};
 
 	result.attr = function (args) {
-		if (args.shapeArgs || args.x) {
+		if (args.shapeArgs || defined(args.x)) {
 			var shapeArgs = args.shapeArgs || args;
 			var paths = this.renderer.cuboidPath(shapeArgs);
 			this.front.attr({d: paths[0], zIndex: paths[3]});
@@ -164,7 +169,7 @@ Highcharts.SVGRenderer.prototype.cuboid = function (shapeArgs) {
 	};
 	
 	result.animate = function (args, duration, complete) {
-		if (args.x && args.y) {
+		if (defined(args.x) && defined(args.y)) {
 			var paths = this.renderer.cuboidPath(args);
 			this.front.attr({zIndex: paths[3]}).animate({d: paths[0]}, duration, complete);
 			this.top.attr({zIndex: paths[4]}).animate({d: paths[1]}, duration, complete);
@@ -297,8 +302,8 @@ Highcharts.SVGRenderer.prototype.arc3d = function (shapeArgs) {
 	result.shapeArgs = shapeArgs;	// Store for later use
 
 	result.top = renderer.path(paths.top).attr({zIndex: paths.zTop}).add(result);
-	result.side1 = renderer.path(paths.side2).attr({zIndex: paths.zSide2});
-	result.side2 = renderer.path(paths.side1).attr({zIndex: paths.zSide1});
+	result.side1 = renderer.path(paths.side2).attr({zIndex: paths.zSide1});
+	result.side2 = renderer.path(paths.side1).attr({zIndex: paths.zSide2});
 	result.inn = renderer.path(paths.inn).attr({zIndex: paths.zInn});
 	result.out = renderer.path(paths.out).attr({zIndex: paths.zOut});
 
@@ -333,7 +338,7 @@ Highcharts.SVGRenderer.prototype.arc3d = function (shapeArgs) {
 	};
 
 	result.animate = function (args, duration, complete) {
-		if (args.end || args.start) {
+		if (defined(args.end) || defined(args.start)) {
 			this._shapeArgs = this.shapeArgs;
 
 			Highcharts.SVGElement.prototype.animate.call(this, {
@@ -348,6 +353,10 @@ Highcharts.SVGRenderer.prototype.arc3d = function (shapeArgs) {
 						end = fx.end,
 						pos = fx.pos,
 						sA = Highcharts.merge(start, {
+							x: start.x + ((end.x - start.x) * pos),
+							y: start.y + ((end.y - start.y) * pos),
+							r: start.r + ((end.r - start.r) * pos),
+							innerR: start.innerR + ((end.innerR - start.innerR) * pos),
 							start: start.start + ((end.start - start.start) * pos),
 							end: start.end + ((end.end - start.end) * pos)
 						});
@@ -518,7 +527,20 @@ defaultChartOptions.chart.options3d = {
 		back: { size: 1, color: 'rgba(255,255,255,0)' }
 	}
 };
-defaultChartOptions.plotOptions.pie.borderColor = undefined;
+
+Highcharts.wrap(Highcharts.Chart.prototype, 'init', function (proceed) {
+	var args = [].slice.call(arguments, 1),
+		plotOptions,
+		pieOptions;
+
+	if (args[0].chart.options3d && args[0].chart.options3d.enabled) {
+		plotOptions = args[0].plotOptions || {};
+		pieOptions = plotOptions.pie || {};
+
+		pieOptions.borderColor = Highcharts.pick(pieOptions.borderColor, undefined); 
+	}
+	proceed.apply(this, args);
+});
 
 Highcharts.wrap(Highcharts.Chart.prototype, 'setChartSize', function (proceed) {
 	proceed.apply(this, [].slice.call(arguments, 1));
@@ -1115,7 +1137,8 @@ Highcharts.wrap(Highcharts.seriesTypes.pie.prototype, 'translate', function (pro
 });
 
 Highcharts.wrap(Highcharts.seriesTypes.pie.prototype.pointClass.prototype, 'haloPath', function (proceed) {
-	return this.series.chart.is3d() ? [] : proceed.call(this);
+	var args = arguments;
+	return this.series.chart.is3d() ? [] : proceed.call(this, args[1]);
 });
 
 Highcharts.wrap(Highcharts.seriesTypes.pie.prototype, 'drawPoints', function (proceed) {
@@ -1126,6 +1149,7 @@ Highcharts.wrap(Highcharts.seriesTypes.pie.prototype, 'drawPoints', function (pr
 
 		// Set the border color to the fill color to provide a smooth edge
 		this.borderWidth = options.borderWidth = options.edgeWidth || 1;
+		this.borderColor = options.edgeColor = Highcharts.pick(options.edgeColor, options.borderColor, undefined);
 
 		states.hover.borderColor = Highcharts.pick(states.hover.edgeColor, this.borderColor);		
 		states.hover.borderWidth = Highcharts.pick(states.hover.edgeWidth, this.borderWidth);	
@@ -1163,13 +1187,14 @@ Highcharts.wrap(Highcharts.seriesTypes.pie.prototype, 'drawDataLabels', function
 			var shapeArgs = point.shapeArgs,
 				r = shapeArgs.r,
 				d = shapeArgs.depth,
-				a1 = shapeArgs.alpha * deg2rad,
+				a1 = (shapeArgs.alpha || series.chart.options.chart.options3d.alpha) * deg2rad, //#3240 issue with datalabels for 0 and null values
 				a2 = (shapeArgs.start + shapeArgs.end) / 2,
 				labelPos = point.labelPos;
 
 			labelPos[1] += (-r * (1 - cos(a1)) * sin(a2)) + (sin(a2) > 0 ? sin(a1) * d : 0);
 			labelPos[3] += (-r * (1 - cos(a1)) * sin(a2)) + (sin(a2) > 0 ? sin(a1) * d : 0);
 			labelPos[5] += (-r * (1 - cos(a1)) * sin(a2)) + (sin(a2) > 0 ? sin(a1) * d : 0);
+
 		});
 	} 
 
@@ -1322,20 +1347,6 @@ Highcharts.VMLRenderer.prototype.arc3d = function (shapeArgs) {
 };
 
 Highcharts.VMLRenderer.prototype.arc3dPath = Highcharts.SVGRenderer.prototype.arc3dPath;
-
-// Draw the series in the reverse order
-Highcharts.Chart.prototype.renderSeries = function () {
-	var serie,
-		i = this.series.length;
-	while (i--) {		
-		serie = this.series[i];
-		serie.translate();
-		if (serie.setTooltipPoints) {
-			serie.setTooltipPoints();
-		}
-		serie.render();	
-	}
-};
 
 Highcharts.wrap(Highcharts.Axis.prototype, 'render', function (proceed) {
 	proceed.apply(this, [].slice.call(arguments, 1));

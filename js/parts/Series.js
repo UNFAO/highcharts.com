@@ -347,7 +347,7 @@ Series.prototype = {
 		// cheaper, allows animation, and keeps references to points.
 		if (updatePoints !== false && dataLength && oldDataLength === dataLength && !series.cropped && !series.hasGroupedData) {
 			each(data, function (point, i) {
-				oldData[i].update(point, false);
+				oldData[i].update(point, false, null, false);
 			});
 
 		} else {
@@ -482,14 +482,15 @@ Series.prototype = {
 			return false;
 		}
 
+		if (xAxis) {
+			xExtremes = xAxis.getExtremes(); // corrected for log axis (#3053)
+			min = xExtremes.min;
+			max = xExtremes.max;
+		}
 
 		// optionally filter out points outside the plot area
 		if (isCartesian && series.sorted && (!cropThreshold || dataLength > cropThreshold || series.forceCrop)) {
 			
-			xExtremes = xAxis.getExtremes(); // corrected for log axis (#3053)
-			min = xExtremes.min;
-			max = xExtremes.max;
-
 			// it's outside current extremes
 			if (processedXData[dataLength - 1] < min || processedXData[0] > max) {
 				processedXData = [];
@@ -514,6 +515,7 @@ Series.prototype = {
 			if (!cropped && processedXData[i] > min && processedXData[i] < max) {
 				activePointCount++;
 			}
+			
 			if (distance > 0 && (closestPointRange === UNDEFINED || distance < closestPointRange)) {
 				closestPointRange = distance;
 
@@ -614,6 +616,7 @@ Series.prototype = {
 				// splat the y data in case of ohlc data array
 				points[i] = (new pointClass()).init(series, [processedXData[i]].concat(splat(processedYData[i])));
 			}
+			points[i].index = cursor; // For faster access in Point.update
 		}
 
 		// Hide cropped-away points - this only runs when the number of points is above cropThreshold, or when
@@ -721,8 +724,8 @@ Series.prototype = {
 				pointStack,
 				stackValues;
 
-			// Discard disallowed y values for log axes
-			if (yAxis.isLog && yValue <= 0) {
+			// Discard disallowed y values for log axes (#3434)
+			if (yAxis.isLog && yValue !== null && yValue <= 0) {
 				point.y = yValue = null;
 				error(10);
 			}
@@ -787,35 +790,25 @@ Series.prototype = {
 	},
 
 	/**
-	 * Animate in the series
+	 * Set the clipping for the series. For animated series it is called twice, first to initiate
+	 * animating the clip then the second time without the animation to set the final clip.
 	 */
-	animate: function (init) {
-		var series = this,
-			chart = series.chart,
+	setClip: function (animation) {
+		var chart = this.chart,
 			renderer = chart.renderer,
-			clipRect,
-			markerClipRect,
-			animation = series.options.animation,
-			clipBox = series.clipBox || chart.clipBox,
 			inverted = chart.inverted,
-			sharedClipKey;
-
-		// Animation option is set to true
-		if (animation && !isObject(animation)) {
-			animation = defaultPlotOptions[series.type].animation;
-		}
-		sharedClipKey = ['_sharedClip', animation.duration, animation.easing, clipBox.height].join(',');
-
-		// Initialize the animation. Set up the clipping rectangle.
-		if (init) {
-
-			// If a clipping rectangle with the same properties is currently present in the chart, use that.
-			clipRect = chart[sharedClipKey];
+			seriesClipBox = this.clipBox,
+			clipBox = seriesClipBox || chart.clipBox,
+			sharedClipKey = this.sharedClipKey || ['_sharedClip', animation && animation.duration, animation && animation.easing, clipBox.height].join(','),
+			clipRect = chart[sharedClipKey],
 			markerClipRect = chart[sharedClipKey + 'm'];
-			if (!clipRect) {
-				chart[sharedClipKey] = clipRect = renderer.clipRect(
-					extend(clipBox, { width: 0 })
-				);
+
+		// If a clipping rectangle with the same properties is currently present in the chart, use that.
+		if (!clipRect) {
+
+			// When animation is set, prepare the initial positions
+			if (animation) { 
+				clipBox.width = 0;
 
 				chart[sharedClipKey + 'm'] = markerClipRect = renderer.clipRect(
 					-99, // include the width of the first marker
@@ -824,12 +817,53 @@ Series.prototype = {
 					inverted ? chart.chartWidth : chart.chartHeight
 				);
 			}
-			series.group.clip(clipRect);
-			series.markerGroup.clip(markerClipRect);
-			series.sharedClipKey = sharedClipKey;
+			chart[sharedClipKey] = clipRect = renderer.clipRect(clipBox);
+			
+		}
+		if (this.options.clip !== false) {
+			this.group.clip(animation || seriesClipBox ? clipRect : chart.clipRect);
+			this.markerGroup.clip(markerClipRect);
+			this.sharedClipKey = sharedClipKey;
+		}
+
+		// Remove the shared clipping rectancgle when all series are shown
+		if (!animation) {
+			setTimeout(function () {
+				if (sharedClipKey && chart[sharedClipKey]) {
+					if (!seriesClipBox) {
+						chart[sharedClipKey] = chart[sharedClipKey].destroy();
+					}
+					if (chart[sharedClipKey + 'm']) {
+						chart[sharedClipKey + 'm'] = chart[sharedClipKey + 'm'].destroy();
+					}
+				}
+			}, 100);
+		}
+	},
+
+	/**
+	 * Animate in the series
+	 */
+	animate: function (init) {
+		var series = this,
+			chart = series.chart,
+			clipRect,
+			animation = series.options.animation,
+			sharedClipKey;
+
+		// Animation option is set to true
+		if (animation && !isObject(animation)) {
+			animation = defaultPlotOptions[series.type].animation;
+		}
+
+		// Initialize the animation. Set up the clipping rectangle.
+		if (init) {
+
+			series.setClip(animation);
 
 		// Run the animation
 		} else {
+			sharedClipKey = this.sharedClipKey;
 			clipRect = chart[sharedClipKey];
 			if (clipRect) {
 				clipRect.animate({
@@ -852,31 +886,8 @@ Series.prototype = {
 	 * This runs after animation to land on the final plot clipping
 	 */
 	afterAnimate: function () {
-		var chart = this.chart,
-			sharedClipKey = this.sharedClipKey,
-			group = this.group,
-			clipBox = this.clipBox;
-
-		if (group && this.options.clip !== false) {
-			if (!sharedClipKey || !clipBox) {
-				group.clip(clipBox ? chart.renderer.clipRect(clipBox) : chart.clipRect);
-			}
-			this.markerGroup.clip(); // no clip
-		}
-
+		this.setClip();
 		fireEvent(this, 'afterAnimate');
-
-		// Remove the shared clipping rectancgle when all series are shown
-		setTimeout(function () {
-			if (sharedClipKey && chart[sharedClipKey]) {
-				if (!clipBox) {
-					chart[sharedClipKey] = chart[sharedClipKey].destroy();
-				}
-				if (chart[sharedClipKey + 'm']) {
-					chart[sharedClipKey + 'm'] = chart[sharedClipKey + 'm'].destroy();
-				}
-			}
-		}, 100);
 	},
 
 	/**
@@ -905,7 +916,7 @@ Series.prototype = {
 			markerGroup = series.markerGroup,
 			globallyEnabled = pick(
 				seriesMarkerOptions.enabled, 
-				series.activePointCount < (0.5 * series.xAxis.len / seriesMarkerOptions.radius)
+				!series.requireSorting || series.activePointCount < (0.5 * series.xAxis.len / seriesMarkerOptions.radius)
 			);
 
 		if (seriesMarkerOptions.enabled !== false || series._hasPointMarkers) {
@@ -1359,7 +1370,7 @@ Series.prototype = {
 			below;
 
 		if (negativeColor && (graph || area)) {
-			translatedThreshold = mathRound(yAxis.toPixels(options.threshold || 0, true));
+			translatedThreshold = mathMin(mathRound(yAxis.toPixels(options.threshold || 0, true)), chartSizeMax); // #3382
 			if (translatedThreshold < 0) {
 				chartSizeMax -= translatedThreshold; // #2534
 			}
@@ -1556,6 +1567,12 @@ Series.prototype = {
 			series.clipNeg();
 		}
 
+		each(series.points, function (point) {
+			if (point.redraw) {
+				point.redraw();
+			}
+		});
+
 		// draw the data labels (inn pies they go before the points)
 		if (series.drawDataLabels) {
 			series.drawDataLabels();
@@ -1575,11 +1592,6 @@ Series.prototype = {
 		// Handle inverted series and tracker groups
 		if (chart.inverted) {
 			series.invertGroups();
-		}
-
-		// Initial clipping, must be defined after inverting groups for VML
-		if (options.clip !== false && !series.sharedClipKey && !hasRendered) {
-			group.clip(chart.clipRect);
 		}
 
 		// Run the animation

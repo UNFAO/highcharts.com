@@ -828,7 +828,45 @@
             </condition>
         </fail -->
 
-        <echo file="${dist.dir}/products.js" append="false">var products = {'Highcharts': {date: '${highcharts.product.date}', nr: '${highcharts.product.version}'},'Highstock': {date: '${highstock.product.date}', nr: '${highstock.product.version}'}};</echo>
+        <echo message=""/>
+        <echo message="Building offline api for highcharts, be patient.." />
+        <echo message=""/>
+        <exec dir="./" executable="grunt" outputproperty="output">
+            <arg line="download-api:highcharts:${highcharts.product.version}" /> <!-- version number -->
+        </exec>
+        <echo message="${output}" />
+        <echo message=""/>
+        <echo message="Building offline api for highstock, be patient.." />
+        <echo message=""/>
+        <exec dir="./" executable="grunt" outputproperty="output">
+            <arg line="download-api:highstock:${highstock.product.version}" /> <!-- version number -->
+        </exec>
+        <echo message="${output}" />
+        <echo message=""/>
+        <echo message="Building offline api for highmaps, be patient.." />
+        <echo message=""/>
+        <exec dir="./" executable="grunt" outputproperty="output">
+            <arg line="download-api:highmaps:${highmaps.product.version}" /> <!-- version number -->
+        </exec>
+        <echo message="${output}" />
+
+
+        <echo file="${dist.dir}/products.js" append="false">
+            var products = {
+                Highcharts: {
+                    date: '${highcharts.product.date}', 
+                    nr: '${highcharts.product.version}'
+                },
+                Highstock: {
+                    date: '${highstock.product.date}',
+                    nr: '${highstock.product.version}'
+                },
+                Highmaps: {
+                    date: '${highmaps.product.date}',
+                    nr: '${highmaps.product.version}'
+                }
+            };
+        </echo>
         <!-- 2. Copy highcharts source and minified versions, adapters, modules, themes. Replace product and version at the same time -->
         <copy file="${highcharts.src.file}" todir="${dist.dir}/highcharts/js"><filterset refid="highcharts.filter"/></copy>
         <copy file="${highcharts.src.file}" todir="${dist.dir}/highmaps/js"><filterset refid="highmaps.filter"/></copy>

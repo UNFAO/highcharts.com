@@ -65,7 +65,8 @@
  * A callback function to access the parsed columns, the two-dimentional input data
  * array directly, before they are interpreted into series data and categories. See also
  * the complete callback, that goes in on a later stage where the raw columns are interpreted
- * into a Highcharts option structure.
+ * into a Highcharts option structure. Return false to stop completion, or call this.complete()
+ * to continue async.
  *
  * - parseDate : Function
  * A callback function to parse string representations of dates into JavaScript timestamps.
@@ -108,6 +109,7 @@
 	// Utilities
 	var each = Highcharts.each,
 		inArray = HighchartsAdapter.inArray,
+		splat = Highcharts.splat,
 		SeriesBuilder;
 	
 	
@@ -126,6 +128,12 @@
 		this.options = options;
 		this.chartOptions = chartOptions;
 		this.columns = options.columns || this.rowsToColumns(options.rows) || [];
+
+		// This is a two-dimensional array holding the raw, trimmed string values
+		// with the same organisation as the columns array. It makes it possible
+		// for example to revert from interpreted timestamps to string-based
+		// categories.
+		this.rawColumns = [];
 
 		// No need to parse or interpret anything
 		if (this.columns.length) {
@@ -249,10 +257,11 @@
 		this.findHeaderRow();
 		
 		// Handle columns if a handleColumns callback is given
-		this.parsed();
+		if (this.parsed() !== false) {
 		
-		// Complete if a complete callback is given
-		this.complete();
+			// Complete if a complete callback is given
+			this.complete();
+		}
 		
 	},
 	
@@ -417,20 +426,22 @@
 	 * numbers.
 	 */
 	findHeaderRow: function () {
-		var headerRow = 0;
-		each(this.columns, function (column) {
-			if (column.isNumeric && typeof column[0] !== 'string') {
-				headerRow = null;
-			}
-		});
-		this.headerRow = headerRow;
+		this.headerRow = 0;
 	},
 	
 	/**
 	 * Trim a string from whitespace
 	 */
-	trim: function (str) {
-		return typeof str === 'string' ? str.replace(/^\s+|\s+$/g, '') : str;
+	trim: function (str, inside) {
+		if (typeof str === 'string') {
+			str = str.replace(/^\s+|\s+$/g, '');
+
+			// Clear white space insdie the string, like thousands separators
+			if (inside && /^[0-9\s]+$/.test(str)) { 
+				str = str.replace(/\s/g, '');
+			}
+		}
+		return str;
 	},
 	
 	/**
@@ -438,69 +449,108 @@
 	 */
 	parseTypes: function () {
 		var columns = this.columns,
-			col = columns.length, 
-			row,
+			col = columns.length;
+
+		while (col--) {
+			this.parseColumn(columns[col], col);
+		}
+
+	},
+
+	/**
+	 * Parse a single column. Set properties like .isDatetime and .isNumeric.
+	 */
+	parseColumn: function (column, col) {
+		var rawColumns = this.rawColumns,
+			columns = this.columns, 
+			row = column.length,
 			val,
 			floatVal,
 			trimVal,
-			isXColumn,
+			trimInsideVal,
+			hasHeaderRow,
+			isXColumn = inArray(col, this.valueCount.xColumns) !== -1,
 			dateVal,
-			descending,
 			backup = [],
 			diff,
-			hasHeaderRow;
+			chartOptions = this.chartOptions,
+			descending,
+			columnTypes = this.options.columnTypes || [],
+			columnType = columnTypes[col],
+			forceCategory = isXColumn && ((chartOptions && chartOptions.xAxis && splat(chartOptions.xAxis)[0].type === 'category') || columnType === 'string');
+		
+		rawColumns[col] = [];
+		while (row--) {
+			val = backup[row] || column[row];
+			
+			trimVal = rawColumns[col][row] = this.trim(val);
+			trimInsideVal = this.trim(val, true);
+			floatVal = parseFloat(trimInsideVal);
+			
+			// Disable number or date parsing by setting the X axis type to category
+			if (forceCategory || row === 0) {
+				column[row] = trimVal;
 
-		while (col--) {
-			row = columns[col].length;
-			while (row--) {
-				val = backup[row] || columns[col][row];
-				floatVal = parseFloat(val);
-				trimVal = this.trim(val);
-
-				/*jslint eqeq: true*/
-				if (trimVal == floatVal) { // is numeric
-				/*jslint eqeq: false*/
-					columns[col][row] = floatVal;
-					
-					// If the number is greater than milliseconds in a year, assume datetime
-					if (floatVal > 365 * 24 * 3600 * 1000) {
-						columns[col].isDatetime = true;
-					} else {
-						columns[col].isNumeric = true;
-					}					
+			} else if (+trimInsideVal === floatVal) { // is numeric
+			
+				column[row] = floatVal;
 				
-				} else { // string, continue to determine if it is a date string or really a string
-					dateVal = this.parseDate(val);
-					// Only allow parsing of dates if this column is an x-column
-					isXColumn = inArray(col, this.valueCount.xColumns) !== -1;
-					if (isXColumn && typeof dateVal === 'number' && !isNaN(dateVal)) { // is date
-						backup[row] = val; 
-						columns[col][row] = dateVal;
-						columns[col].isDatetime = true;
-
-						// Check if the dates are uniformly descending or ascending. If they 
-						// are not, chances are that they are a different time format, so check
-						// for alternative.
-						if (columns[col][row + 1] !== undefined) {
-							diff = dateVal > columns[col][row + 1];
-							if (diff !== descending && descending !== undefined && this.alternativeFormat) {
-								this.dateFormat = this.alternativeFormat;
-								row = columns[col].length;
-								this.alternativeFormat = this.dateFormats[this.dateFormat].alternative;
-							}
-							descending = diff;
-						}
-					
-					} else { // string
-						columns[col][row] = trimVal === '' ? null : trimVal;
-					}
+				// If the number is greater than milliseconds in a year, assume datetime
+				if (floatVal > 365 * 24 * 3600 * 1000 && columnType !== 'float') {
+					column.isDatetime = true;
+				} else {
+					column.isNumeric = true;
 				}
 
+				if (column[row + 1] !== undefined) {
+					descending = floatVal > column[row + 1];
+				}
+			
+			// String, continue to determine if it is a date string or really a string
+			} else {
+				dateVal = this.parseDate(val);
+				// Only allow parsing of dates if this column is an x-column
+				if (isXColumn && typeof dateVal === 'number' && !isNaN(dateVal) && columnType !== 'float') { // is date
+					backup[row] = val; 
+					column[row] = dateVal;
+					column.isDatetime = true;
+
+					// Check if the dates are uniformly descending or ascending. If they 
+					// are not, chances are that they are a different time format, so check
+					// for alternative.
+					if (column[row + 1] !== undefined) {
+						diff = dateVal > column[row + 1];
+						if (diff !== descending && descending !== undefined) {
+							if (this.alternativeFormat) {
+								this.dateFormat = this.alternativeFormat;
+								row = column.length;
+								this.alternativeFormat = this.dateFormats[this.dateFormat].alternative;
+							} else {
+								column.unsorted = true;
+							}
+						}
+						descending = diff;
+					}
+				
+				} else { // string
+					column[row] = trimVal === '' ? null : trimVal;
+					if (row !== 0 && (column.isDatetime || column.isNumeric)) {
+						column.mixed = true;
+					}
+				}
 			}
 		}
 
-		// If the 0 column is date and descending, reverse all columns
-		if (columns[0].isDatetime && descending) {
+		// If strings are intermixed with numbers or dates in a parsed column, it is an indication
+		// that parsing went wrong or the data was not intended to display as numbers or dates and 
+		// parsing is too aggressive. Fall back to categories. Demonstrated in the 
+		// highcharts/demo/column-drilldown sample.
+		if (isXColumn && column.mixed) {
+			columns[col] = rawColumns[col];
+		}
+
+		// If the 0 column is date or number and descending, reverse all columns. 
+		if (isXColumn && descending && this.options.sort) {
 			hasHeaderRow = typeof columns[0][0] !== 'number';
 			for (col = 0; col < columns.length; col++) {
 				columns[col].reverse();
@@ -523,27 +573,27 @@
 			}
 		},
 		'dd/mm/YYYY': {
-			regex: /^([0-9]{2})[\-\/\.]([0-9]{2})[\-\/\.]([0-9]{4})$/,
+			regex: /^([0-9]{1,2})[\-\/\.]([0-9]{1,2})[\-\/\.]([0-9]{4})$/,
 			parser: function (match) {
 				return Date.UTC(+match[3], match[2] - 1, +match[1]);
 			},
 			alternative: 'mm/dd/YYYY' // different format with the same regex
 		},
 		'mm/dd/YYYY': {
-			regex: /^([0-9]{2})[\-\/\.]([0-9]{2})[\-\/\.]([0-9]{4})$/,
+			regex: /^([0-9]{1,2})[\-\/\.]([0-9]{1,2})[\-\/\.]([0-9]{4})$/,
 			parser: function (match) {
 				return Date.UTC(+match[3], match[1] - 1, +match[2]);
 			}
 		},
 		'dd/mm/YY': {
-			regex: /^([0-9]{2})[\-\/\.]([0-9]{2})[\-\/\.]([0-9]{2})$/,
+			regex: /^([0-9]{1,2})[\-\/\.]([0-9]{1,2})[\-\/\.]([0-9]{2})$/,
 			parser: function (match) {
 				return Date.UTC(+match[3] + 2000, match[2] - 1, +match[1]);
 			},
 			alternative: 'mm/dd/YY' // different format with the same regex
 		},
 		'mm/dd/YY': {
-			regex: /^([0-9]{2})[\-\/\.]([0-9]{2})[\-\/\.]([0-9]{2})$/,
+			regex: /^([0-9]{1,2})[\-\/\.]([0-9]{1,2})[\-\/\.]([0-9]{2})$/,
 			parser: function (match) {
 				return Date.UTC(+match[3] + 2000, match[1] - 1, +match[2]);
 			}
@@ -586,15 +636,19 @@
 					ret = format.parser(match);
 				}
 			}
-			// Fall back to Date.parse
-			/*
+			// Fall back to Date.parse		
 			if (!match) {
 				match = Date.parse(val);
-				if (typeof match === 'number' && !isNaN(match)) {
-					ret = match;
+				// External tools like Date.js and MooTools extend Date object and
+				// returns a date.
+				if (typeof match === 'object' && match !== null && match.getTime) {
+					ret = match.getTime() - match.getTimezoneOffset() * 60000;
+				
+				// Timestamp
+				} else if (typeof match === 'number' && !isNaN(match)) {
+					ret = match - (new Date(match)).getTimezoneOffset() * 60000;
 				}
 			}
-			*/
 		}
 		return ret;
 	},
@@ -630,7 +684,7 @@
 	 */
 	parsed: function () {
 		if (this.options.parsed) {
-			this.options.parsed.call(this, this.columns);
+			return this.options.parsed.call(this, this.columns);
 		}
 	},
 
@@ -780,11 +834,14 @@
 
 			// Do the callback
 			chartOptions = {
-				xAxis: {
-					type: type
-				},
 				series: series
 			};
+			if (type) {
+				chartOptions.xAxis = {
+					type: type
+				};
+			}
+			
 			if (options.complete) {
 				options.complete(chartOptions);
 			}
@@ -811,6 +868,7 @@
 
 		if (userOptions && userOptions.data) {
 			Highcharts.data(Highcharts.extend(userOptions.data, {
+
 				afterComplete: function (dataOptions) {
 					var i, series;
 					

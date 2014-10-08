@@ -144,14 +144,18 @@ wrap(Pointer.prototype, 'init', function (proceed, chart, options) {
 // are drawn on top of the grid line, and subsequent axes are drawn outside
 wrap(Axis.prototype, 'autoLabelAlign', function (proceed) {
 	var chart = this.chart,
+		options = this.options,
 		panes = chart._labelPanes = chart._labelPanes || {},
-		key;
+		key,
+		labelOptions = this.options.labels;
 	if (this.chart.options._stock && this.coll === 'yAxis') {
-		key = this.pos + ',' + this.len;
-	
-		if (!panes[key]) { // do it only for the first Y axis of each pane
-			if (this.options.labels.x === 15) { // default
-				this.options.labels.x = 0;
+		key = options.top + ',' + options.height;
+		if (!panes[key] && labelOptions.enabled) { // do it only for the first Y axis of each pane
+			if (labelOptions.x === 15) { // default
+				labelOptions.x = 0;
+			}
+			if (labelOptions.align === undefined) {
+				labelOptions.align = 'right';
 			}
 			panes[key] = 1;
 			return 'right';
@@ -173,7 +177,7 @@ Axis.prototype.getPlotLinePath = function (value, lineWidth, old, force, transla
 		x2,
 		y2,
 		result = [],
-		axes,
+		axes = [], //#3416 need a default array
 		axes2,
 		uniqueAxes;
 
@@ -534,7 +538,7 @@ Point.prototype.tooltipFormatter = function (pointFormat) {
 	
 	pointFormat = pointFormat.replace(
 		'{point.change}',
-		(point.change > 0 ? '+' : '') + numberFormat(point.change, pick(point.series.tooltipOptions.changeDecimals, 2))
+		(point.change > 0 ? '+' : '') + Highcharts.numberFormat(point.change, pick(point.series.tooltipOptions.changeDecimals, 2))
 	); 
 	
 	return pointTooltipFormatter.apply(this, [pointFormat]);
@@ -547,7 +551,7 @@ Point.prototype.tooltipFormatter = function (pointFormat) {
 
 /**
  * Extend the Series prototype to create a separate series clip box. This is related
- * to using multiple panes, and a future pane logic should incorporate this feature.
+ * to using multiple panes, and a future pane logic should incorporate this feature (#2754).
  */
 wrap(Series.prototype, 'render', function (proceed) {
 	// Only do this on stock charts (#2939), and only if the series type handles clipping

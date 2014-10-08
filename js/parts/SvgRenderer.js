@@ -961,7 +961,7 @@ SVGElement.prototype = {
 			titleNode = doc.createElementNS(SVG_NS, 'title');
 			this.element.appendChild(titleNode);
 		}
-		titleNode.textContent = value.replace(/<[^>]*>/g, ''); // #3276
+		titleNode.textContent = pick(value, '').replace(/<[^>]*>/g, ''); // #3276
 	},
 	textSetter: function (value) {
 		if (value !== this.textStr) {
@@ -1196,6 +1196,9 @@ SVGRenderer.prototype = {
 							((textStyles && textStyles.fontSize) || renderer.style.fontSize || 12),
 						tspan
 					).h;
+			},
+			unescapeAngleBrackets = function (inputStr) {
+				return inputStr.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 			};
 
 		/// remove old text
@@ -1206,7 +1209,7 @@ SVGRenderer.prototype = {
 		// Skip tspans, add text directly to text node. The forceTSpan is a hook 
 		// used in text outline hack.
 		if (!hasMarkup && !textStroke && textStr.indexOf(' ') === -1) {
-			textNode.appendChild(doc.createTextNode(textStr));
+			textNode.appendChild(doc.createTextNode(unescapeAngleBrackets(textStr)));
 			return;
 
 		// Complex strings, add more logic
@@ -1259,9 +1262,7 @@ SVGRenderer.prototype = {
 							css(tspan, { cursor: 'pointer' });
 						}
 
-						span = (span.replace(/<(.|\n)*?>/g, '') || ' ')
-							.replace(/&lt;/g, '<')
-							.replace(/&gt;/g, '>');
+						span = unescapeAngleBrackets(span.replace(/<(.|\n)*?>/g, '') || ' ');
 
 						// Nested tags aren't supported, and cause crash in Safari (#1596)
 						if (span !== ' ') {
@@ -1756,7 +1757,6 @@ SVGRenderer.prototype = {
 			};
 
 			imageSrc = symbol.match(imageRegex)[1];
-			// docs: series-marker-width-height. Note that both width and height must be set
 			imageSize = symbolSizes[imageSrc] || (options && options.width && options.height && [options.width, options.height]);
 
 			// Ireate the image synchronously, add attribs async

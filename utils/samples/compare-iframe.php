@@ -186,11 +186,9 @@ function getCompareTooltips() {
 						return proceed.apply(this, Array.prototype.slice.call(arguments, 1));
 					}
 				} catch (e) {
-					console.error('HIGHCHARTS UTILS CAUGHT ERROR:', e.message);
-					if (parent.window.report) {
-						parent.window.report += '<br/>Broke on JS error (<?php echo $_GET['which']; ?>) ';
-					}
-					parent.window.$('#report').html(parent.window.report);
+					e = 'ERROR (<?php echo $_GET['which']; ?> frame): ' + e.message;
+					console.error(e);
+					parent.window.error = e;
 					parent.window.onDifferent('Error');
 
 				}
@@ -251,7 +249,9 @@ function getCompareTooltips() {
 						try {
 							test(chart);
 						} catch (e) {
-							console.error('HIGHCHARTS UTILS CAUGHT ERROR:', e.message);
+							e = 'ERROR in test.js (<?php echo $_GET['which'] ?> frame): ' + e.message;
+							console.error(e);
+							parent.window.error = e;
 							parent.window.onDifferent('Error');
 						}
 
@@ -264,6 +264,11 @@ function getCompareTooltips() {
 			});
 			
 			window.alert = function () {}
+
+			window.onbeforeunload = function(){
+				$(document).unbind().die();    //remove listeners on document
+				$(document).find('*').unbind().die(); //remove listeners on all nodes
+			}
 		</script>
 		
 		
